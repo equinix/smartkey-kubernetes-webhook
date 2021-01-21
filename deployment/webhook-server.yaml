@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook-server
+  namespace: smartkey-vault
+  labels:
+    app: webhook-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webhook-server
+  template:
+    metadata:
+      labels:
+        app: webhook-server
+    spec:
+      containers:
+      - name: server
+        image: christianhxc/smartkey-kubernetes-webhook:0.1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8443
+          name: webhook-api
+        volumeMounts:
+        - name: webhook-tls-certs
+          mountPath: /run/secrets/tls
+          readOnly: true
+        - name: smk-credentials
+          mountPath: /smk/credentials
+        env:
+        - name: SVC_ENDPOINT
+          value: "decrypt-secrets.smartkey-vault.svc"
+      volumes:
+      - name: webhook-tls-certs
+        secret:
+          secretName: webhook-server-tls
+      - name: smk-credentials
+        secret:
+          secretName: smk-credentials
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-secrets
+  namespace: smartkey-vault
+spec:
+  selector:
+    app: webhook-server
+  ports:
+    - port: 443
+      targetPort: webhook-api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-pods
+  namespace: smartkey-vault
+spec:
+  selector:
+    app: webhook-server
+  ports:
+    - port: 443
+      targetPort: webhook-api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: decrypt-secrets
+  namespace: smartkey-vault
+spec:
+  selector:
+    app: webhook-server
+  ports:
+    - port: 443
+      targetPort: webhook-api
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: smartkey-webhook
+webhooks:
+  - name: webhook-secrets.smartkey-vault.svc
+    clientConfig:
+      service:
+        name: webhook-secrets
+        namespace: smartkey-vault
+        path: "/mutatesecret"
+      caBundle: ${CA_PEM_B64}
+    rules:
+      - operations: [ "CREATE", "UPDATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["secrets"]
+    namespaceSelector:
+      matchLabels:
+        smartkey-vault: enabled
+    admissionReviewVersions: ["v1", "v1beta1"]
+    sideEffects: None
+  - name: webhook-pods.smartkey-vault.svc
+    clientConfig:
+      service:
+        name: webhook-pods
+        namespace: smartkey-vault
+        path: "/mutatepod"
+      caBundle: ${CA_PEM_B64}
+    rules:
+      - operations: [ "CREATE", "UPDATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+    namespaceSelector:
+      matchLabels:
+        smartkey-vault: enabled
+    admissionReviewVersions: ["v1", "v1beta1"]
+    sideEffects: None
